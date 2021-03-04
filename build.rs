@@ -16,5 +16,10 @@ fn main() {
         "has_to_int_unchecked",
     );
 
+    ac.emit_expression_cfg(
+        "0x1234567890123456u64.to_ne_bytes()",
+        "has_int_to_from_bytes",
+    );
+
     autocfg::rerun_path("build.rs");
 }
