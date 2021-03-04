@@ -206,24 +206,19 @@ empty_trait_impl!(Unsigned for usize u8 u16 u32 u64);
 #[cfg(has_i128)]
 empty_trait_impl!(Unsigned for u128);
 
-impl<T: Unsigned> Unsigned for Wrapping<T>
-where
-    Wrapping<T>: Num,
-{
-}
+impl<T: Unsigned> Unsigned for Wrapping<T> where Wrapping<T>: Num {}
 
 #[test]
 fn unsigned_wrapping_is_unsigned() {
     fn require_unsigned<T: Unsigned>(_: &T) {}
     require_unsigned(&Wrapping(42_u32));
 }
-/*
+
 // Commenting this out since it doesn't compile on Rust 1.8,
 // because on this version Wrapping doesn't implement Neg and therefore can't
 // implement Signed.
-#[test]
-fn signed_wrapping_is_signed() {
-    fn require_signed<T: Signed>(_: &T) {}
-    require_signed(&Wrapping(-42));
-}
-*/
+// #[test]
+// fn signed_wrapping_is_signed() {
+//     fn require_signed<T: Signed>(_: &T) {}
+//     require_signed(&Wrapping(-42));
+// }

@@ -20,13 +20,17 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+// Only `no_std` builds actually use `libm`.
+#[cfg(all(not(feature = "std"), feature = "libm"))]
+extern crate libm;
+
 use core::fmt;
 use core::num::Wrapping;
 use core::ops::{Add, Div, Mul, Rem, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, RemAssign, SubAssign};
 
 pub use bounds::Bounded;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "libm"))]
 pub use float::Float;
 pub use float::FloatConst;
 // pub use real::{FloatCore, Real}; // NOTE: Don't do this, it breaks `use num_traits::*;`.
@@ -39,8 +43,10 @@ pub use ops::checked::{
 };
 pub use ops::inv::Inv;
 pub use ops::mul_add::{MulAdd, MulAddAssign};
-pub use ops::saturating::Saturating;
-pub use ops::wrapping::{WrappingAdd, WrappingMul, WrappingShl, WrappingShr, WrappingSub};
+pub use ops::saturating::{Saturating, SaturatingAdd, SaturatingMul, SaturatingSub};
+pub use ops::wrapping::{
+    WrappingAdd, WrappingMul, WrappingNeg, WrappingShl, WrappingShr, WrappingSub,
+};
 pub use pow::{checked_pow, pow, Pow};
 pub use sign::{abs, abs_sub, signum, Signed, Unsigned};
 
@@ -54,7 +60,6 @@ pub mod identities;
 pub mod int;
 pub mod ops;
 pub mod pow;
-#[cfg(feature = "std")]
 pub mod real;
 pub mod sign;
 
@@ -63,7 +68,7 @@ pub mod sign;
 pub trait Num: PartialEq + Zero + One + NumOps {
     type FromStrRadixErr;
 
-    /// Convert from a string and radix <= 36.
+    /// Convert from a string and radix (typically `2..=36`).
     ///
     /// # Examples
     ///
@@ -76,6 +81,18 @@ pub trait Num: PartialEq + Zero + One + NumOps {
     /// let result = <i32 as Num>::from_str_radix("foo", 10);
     /// assert!(result.is_err());
     /// ```
+    ///
+    /// # Supported radices
+    ///
+    /// The exact range of supported radices is at the discretion of each type implementation. For
+    /// primitive integers, this is implemented by the inherent `from_str_radix` methods in the
+    /// standard library, which **panic** if the radix is not in the range from 2 to 36. The
+    /// implementation in this crate for primitive floats is similar.
+    ///
+    /// For third-party types, it is suggested that implementations should follow suit and at least
+    /// accept `2..=36` without panicking, but an `Err` may be returned for any unsupported radix.
+    /// It's possible that a type might not even support the common radix 10, nor any, if string
+    /// parsing doesn't make sense for that type.
     fn from_str_radix(str: &str, radix: u32) -> Result<Self, Self::FromStrRadixErr>;
 }
 
@@ -208,16 +225,29 @@ macro_rules! float_trait_impl {
                 use self::FloatErrorKind::*;
                 use self::ParseFloatError as PFE;
 
+                // Special case radix 10 to use more accurate standard library implementation
+                if radix == 10 {
+                    return src.parse().map_err(|_| PFE {
+                        kind: if src.is_empty() { Empty } else { Invalid },
+                    });
+                }
+
                 // Special values
                 match src {
                     "inf"   => return Ok(core::$t::INFINITY),
                     "-inf"  => return Ok(core::$t::NEG_INFINITY),
                     "NaN"   => return Ok(core::$t::NAN),
+                    "-NaN"  => return Ok(-core::$t::NAN),
                     _       => {},
                 }
 
                 fn slice_shift_char(src: &str) -> Option<(char, &str)> {
-                    src.chars().nth(0).map(|ch| (ch, &src[1..]))
+                    let mut chars = src.chars();
+                    if let Some(ch) = chars.next() {
+                        Some((ch, chars.as_str()))
+                    } else {
+                        None
+                    }
                 }
 
                 let (is_positive, src) =  match slice_shift_char(src) {
@@ -360,6 +390,8 @@ float_trait_impl!(Num for f32 f64);
 ///  If input is less than min then this returns min.
 ///  If input is greater than max then this returns max.
 ///  Otherwise this returns input.
+///
+/// **Panics** in debug mode if `!(min <= max)`.
 #[inline]
 pub fn clamp<T: PartialOrd>(input: T, min: T, max: T) -> T {
     debug_assert!(min <= max, "min must be less than or equal to max");
@@ -372,17 +404,97 @@ pub fn clamp<T: PartialOrd>(input: T, min: T, max: T) -> T {
     }
 }
 
+/// A value bounded by a minimum value
+///
+///  If input is less than min then this returns min.
+///  Otherwise this returns input.
+///  `clamp_min(std::f32::NAN, 1.0)` preserves `NAN` different from `f32::min(std::f32::NAN, 1.0)`.
+///
+/// **Panics** in debug mode if `!(min == min)`. (This occurs if `min` is `NAN`.)
+#[inline]
+pub fn clamp_min<T: PartialOrd>(input: T, min: T) -> T {
+    debug_assert!(min == min, "min must not be NAN");
+    if input < min {
+        min
+    } else {
+        input
+    }
+}
+
+/// A value bounded by a maximum value
+///
+///  If input is greater than max then this returns max.
+///  Otherwise this returns input.
+///  `clamp_max(std::f32::NAN, 1.0)` preserves `NAN` different from `f32::max(std::f32::NAN, 1.0)`.
+///
+/// **Panics** in debug mode if `!(max == max)`. (This occurs if `max` is `NAN`.)
+#[inline]
+pub fn clamp_max<T: PartialOrd>(input: T, max: T) -> T {
+    debug_assert!(max == max, "max must not be NAN");
+    if input > max {
+        max
+    } else {
+        input
+    }
+}
+
 #[test]
 fn clamp_test() {
     // Int test
     assert_eq!(1, clamp(1, -1, 2));
     assert_eq!(-1, clamp(-2, -1, 2));
     assert_eq!(2, clamp(3, -1, 2));
+    assert_eq!(1, clamp_min(1, -1));
+    assert_eq!(-1, clamp_min(-2, -1));
+    assert_eq!(-1, clamp_max(1, -1));
+    assert_eq!(-2, clamp_max(-2, -1));
 
     // Float test
     assert_eq!(1.0, clamp(1.0, -1.0, 2.0));
     assert_eq!(-1.0, clamp(-2.0, -1.0, 2.0));
     assert_eq!(2.0, clamp(3.0, -1.0, 2.0));
+    assert_eq!(1.0, clamp_min(1.0, -1.0));
+    assert_eq!(-1.0, clamp_min(-2.0, -1.0));
+    assert_eq!(-1.0, clamp_max(1.0, -1.0));
+    assert_eq!(-2.0, clamp_max(-2.0, -1.0));
+    assert!(clamp(::core::f32::NAN, -1.0, 1.0).is_nan());
+    assert!(clamp_min(::core::f32::NAN, 1.0).is_nan());
+    assert!(clamp_max(::core::f32::NAN, 1.0).is_nan());
+}
+
+#[test]
+#[should_panic]
+#[cfg(debug_assertions)]
+fn clamp_nan_min() {
+    clamp(0., ::core::f32::NAN, 1.);
+}
+
+#[test]
+#[should_panic]
+#[cfg(debug_assertions)]
+fn clamp_nan_max() {
+    clamp(0., -1., ::core::f32::NAN);
+}
+
+#[test]
+#[should_panic]
+#[cfg(debug_assertions)]
+fn clamp_nan_min_max() {
+    clamp(0., ::core::f32::NAN, ::core::f32::NAN);
+}
+
+#[test]
+#[should_panic]
+#[cfg(debug_assertions)]
+fn clamp_min_nan_min() {
+    clamp_min(0., ::core::f32::NAN);
+}
+
+#[test]
+#[should_panic]
+#[cfg(debug_assertions)]
+fn clamp_max_nan_max() {
+    clamp_max(0., ::core::f32::NAN);
 }
 
 #[test]
@@ -394,6 +506,15 @@ fn from_str_radix_unwrap() {
 
     let f: f32 = Num::from_str_radix("0.0", 10).unwrap();
     assert_eq!(f, 0.0);
+}
+
+#[test]
+fn from_str_radix_multi_byte_fail() {
+    // Ensure parsing doesn't panic, even on invalid sign characters
+    assert!(f32::from_str_radix("™0.2", 10).is_err());
+
+    // Even when parsing the exponent sign
+    assert!(f32::from_str_radix("0.2E™1", 10).is_err());
 }
 
 #[test]
