@@ -21,5 +21,7 @@ fn main() {
         "has_int_to_from_bytes",
     );
 
+    ac.emit_expression_cfg("3.14f64.to_ne_bytes()", "has_float_to_from_bytes");
+
     autocfg::rerun_path("build.rs");
 }
