@@ -287,8 +287,8 @@ mod tests {
     use super::*;
 
     macro_rules! check_to_from_bytes {
-        ($( $ty:ty )+) => {$(
-            let n: $ty = 1;
+        ($( $ty:ty )+) => {$({
+            let n = 1;
             let be = <$ty as ToFromBytes>::to_be_bytes(&n);
             let le = <$ty as ToFromBytes>::to_le_bytes(&n);
             let ne = <$ty as ToFromBytes>::to_ne_bytes(&n);
@@ -308,7 +308,7 @@ mod tests {
             } else {
                 assert_eq!(<$ty as ToFromBytes>::from_ne_bytes(&le), n);
             }
-        )+}
+        })+}
     }
 
     #[test]
